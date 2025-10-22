@@ -17,6 +17,7 @@ jobs:
         arch: [x64, x86]
     env:
       POPPLER_VERSION: "24.08.0-0"  # adjust when upstream updates
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
@@ -41,13 +42,36 @@ jobs:
         shell: pwsh
         run: |
           $arch = "${{ matrix.arch }}"
-          $suffix = if ($arch -eq 'x64') { 'x86_64' } else { 'x86' }
           $ver = "$env:POPPLER_VERSION"
-          $base = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$ver"
-          $zip = "poppler-$ver-$suffix.zip"
-          $url = "$base/$zip"
-          Write-Host "Downloading Poppler from $url"
-          Invoke-WebRequest -Uri $url -OutFile poppler.zip -UseBasicParsing
+          $tag = "v$ver"
+          $patterns = @()
+          if ($arch -eq 'x64') {
+            $patterns = @(
+              "poppler-$ver-*-x86_64.zip",
+              "poppler-*x86_64.zip",
+              "*x86_64.zip"
+            )
+          } else {
+            $patterns = @(
+              "poppler-$ver-*-x86.zip",
+              "poppler-*x86.zip",
+              "*i686.zip",
+              "*x86.zip"
+            )
+          }
+          $downloaded = $false
+          foreach ($p in $patterns) {
+            try {
+              Write-Host "Trying to download asset '$p' from tag $tag"
+              gh release download $tag -R oschwartz10612/poppler-windows -p $p -O poppler.zip
+              if (Test-Path poppler.zip) { $downloaded = $true; break }
+            } catch {
+              Write-Host "Pattern '$p' not found. Trying next..."
+            }
+          }
+          if (-not $downloaded) {
+            throw "Failed to download Poppler asset for arch $arch at tag $tag"
+          }
           Expand-Archive -Path poppler.zip -DestinationPath poppler -Force
           # Find the bin folder that contains pdftohtml.exe
           $pdftohtml = Get-ChildItem -Path poppler -Recurse -Filter pdftohtml.exe | Select-Object -First 1
