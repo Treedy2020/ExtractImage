@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        arch: [x64, x86]
+        arch: [x64]
     env:
       POPPLER_VERSION: "24.08.0-0"  # adjust when upstream updates
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
