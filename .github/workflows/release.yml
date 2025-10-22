@@ -1,5 +1,8 @@
 name: Windows Release
 
+permissions:
+  contents: write  # allow creating GitHub Releases
+
 on:
   push:
     tags:
@@ -12,6 +15,8 @@ jobs:
     strategy:
       matrix:
         arch: [x64, x86]
+    env:
+      POPPLER_VERSION: "24.08.0-0"  # adjust when upstream updates
 
     steps:
       - name: Checkout
@@ -26,18 +31,54 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pymupdf
+          pip install pyinstaller pymupdf pillow
 
-      - name: Build executable
+      - name: Build executable (GUI by default)
         run: |
-          pyinstaller main.py --name ExtractPDF --onefile
+          pyinstaller main.py --name ExtractPDF --onefile --noconsole
+
+      - name: Download Poppler (${{ matrix.arch }})
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $suffix = if ($arch -eq 'x64') { 'x86_64' } else { 'x86' }
+          $ver = "$env:POPPLER_VERSION"
+          $base = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$ver"
+          $zip = "poppler-$ver-$suffix.zip"
+          $url = "$base/$zip"
+          Write-Host "Downloading Poppler from $url"
+          Invoke-WebRequest -Uri $url -OutFile poppler.zip -UseBasicParsing
+          Expand-Archive -Path poppler.zip -DestinationPath poppler -Force
+          # Find the bin folder that contains pdftohtml.exe
+          $pdftohtml = Get-ChildItem -Path poppler -Recurse -Filter pdftohtml.exe | Select-Object -First 1
+          if (-not $pdftohtml) { throw "pdftohtml.exe not found in downloaded Poppler package" }
+          $popBin = Split-Path -Parent $pdftohtml.FullName
+          New-Item -ItemType Directory -Force -Path bundle/bin | Out-Null
+          Copy-Item -Path (Join-Path $popBin '*') -Destination bundle/bin -Recurse -Force
+
+      - name: Create launcher
+        shell: pwsh
+        run: |
+          @"
+          @echo off
+          setlocal
+          set PATH=%~dp0bin;%PATH%
+          "%~dp0ExtractPDF.exe" %*
+          endlocal
+          "@ | Out-File -FilePath bundle\run.cmd -Encoding ascii -Force
+
+      - name: Assemble bundle
+        shell: pwsh
+        run: |
+          Copy-Item -Path dist\ExtractPDF.exe -Destination bundle\ -Force
 
       - name: Package artifact
+        shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
           if ($version.StartsWith("v")) { $version = $version.Substring(1) }
           $zipName = "ExtractPDF-${version}-${{ matrix.arch }}.zip"
-          Compress-Archive -Path "dist/ExtractPDF.exe" -DestinationPath $zipName -Force
+          Compress-Archive -Path "bundle/*" -DestinationPath $zipName -Force
           echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
         id: package
 
@@ -52,6 +93,8 @@ jobs:
     name: Publish Release
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
 
     steps:
       - name: Download build artifacts
@@ -64,3 +107,4 @@ jobs:
         with:
           files: dist/**/*.zip
           name: Release ${{ github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}

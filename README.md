@@ -55,6 +55,10 @@ Troubleshooting
 Releases
 - Poppler Binaries
   - The app detects tools via `PATH`. To make releases portable, bundle Poppler executables with the release and add them to `PATH` at runtime.
+  - GitHub Actions: `.github/workflows/release.yml` builds Windows x64/x86 artifacts and downloads Poppler for the matching architecture from `oschwartz10612/poppler-windows` using the `POPPLER_VERSION` env. Artifacts include:
+    - `ExtractPDF.exe`
+    - `bin/` with `pdftohtml.exe` and `pdftoppm.exe` (+ DLLs)
+    - `run.cmd` which prepends `bin` to `PATH` then launches the app
   - Recommended layout in your release archive:
     - `bin/` containing `pdftohtml` and `pdftoppm` (and dependent DLLs on Windows).
     - A launcher script or wrapper that prepends `bin` to `PATH` before invoking Python.
@@ -67,6 +71,11 @@ Releases
 Build Suggestions (optional)
 - PyInstaller/py2app can be used to package the Python app; make sure to also ship Poppler in an adjacent `bin/` folder and adjust `PATH` in a small bootstrap script.
 - Do not rely on `sips` on macOS; the code uses Pillow if present and otherwise preserves original image formats.
+
+CI Notes (Windows Poppler x64/x86)
+- The release workflow uses a matrix for `x64` and `x86` builds and downloads the matching Poppler package.
+- If upstream assets rename/move, update `POPPLER_VERSION` in the workflow and/or adjust the download step URLs.
+- The generated zip contains `run.cmd`; users should run that to ensure Poppler is on `PATH`.
 
 Repository Layout
 - `main.py` — cross‑platform CLI/GUI and extraction logic (Poppler first, PyMuPDF fallback).

@@ -935,7 +935,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.gui:
+    # If packaged as an executable (PyInstaller) with no CLI args, launch GUI by default
+    is_frozen = getattr(sys, "frozen", False)
+    no_cli_args = len(sys.argv) == 1
+    if args.gui or (is_frozen and no_cli_args):
         run_gui()
         return
 
