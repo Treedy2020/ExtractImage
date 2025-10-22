@@ -34,40 +34,61 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller pymupdf pillow
 
-      - name: Build executable (GUI by default)
-        run: |
-          pyinstaller main.py --name ExtractPDF --onefile --noconsole
-
       - name: Download Poppler bundle
+        id: poppler
         shell: pwsh
         run: |
           $ver = "$env:POPPLER_VERSION"
           $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$ver/Release-$ver.zip"
-          Write-Host "Downloading Poppler bundle from $url"
-          Invoke-WebRequest -Uri $url -OutFile poppler.zip -UseBasicParsing
+          Write-Host "Attempt GitHub Poppler bundle: $url"
+          $downloaded = $false
+          try {
+            Invoke-WebRequest -Uri $url -OutFile poppler.zip -UseBasicParsing -ErrorAction Stop
+            $downloaded = Test-Path poppler.zip
+          } catch {
+            Write-Warning "GitHub Poppler download failed: $($_.Exception.Message)"
+          }
+
+          if (-not $downloaded) {
+            Write-Host "Falling back to AppVeyor artifacts (tsdgeos/poppler-mirror)"
+            $proj = "tsdgeos/poppler-mirror"
+            $projUrl = "https://ci.appveyor.com/api/projects/$proj"
+            try {
+              $meta = Invoke-RestMethod -Method Get -Uri $projUrl -ErrorAction Stop
+            } catch {
+              throw "Failed to query AppVeyor project: $($_.Exception.Message)"
+            }
+            $build = $meta.build
+            if (-not $build) { throw "No build info returned by AppVeyor" }
+            $jobId = $build.jobs[0].jobId
+            if (-not $jobId) { throw "No jobId found in AppVeyor build metadata" }
+            $artsUrl = "https://ci.appveyor.com/api/buildjobs/$jobId/artifacts"
+            try {
+              $arts = Invoke-RestMethod -Method Get -Uri $artsUrl -ErrorAction Stop
+            } catch {
+              throw "Failed to list AppVeyor artifacts: $($_.Exception.Message)"
+            }
+            # Prefer x64 artifacts but fallback to any .zip
+            $artifact = $arts | Where-Object { $_.fileName -like "*x86_64*.zip" -or $_.fileName -like "*x64*.zip" } | Select-Object -First 1
+            if (-not $artifact) { $artifact = $arts | Where-Object { $_.fileName -like "*.zip" } | Select-Object -First 1 }
+            if (-not $artifact) { throw "No .zip artifact found in AppVeyor job $jobId" }
+            $appUrl = "https://ci.appveyor.com/api/buildjobs/$jobId/artifacts/$($artifact.fileName)"
+            Write-Host "Downloading AppVeyor artifact: $($artifact.fileName)"
+            Invoke-WebRequest -Uri $appUrl -OutFile poppler.zip -UseBasicParsing -ErrorAction Stop
+          }
           Expand-Archive -Path poppler.zip -DestinationPath poppler -Force
           # Find the bin folder that contains pdftohtml.exe
           $pdftohtml = Get-ChildItem -Path poppler -Recurse -Filter pdftohtml.exe | Select-Object -First 1
           if (-not $pdftohtml) { throw "pdftohtml.exe not found in downloaded Poppler package" }
           $popBin = Split-Path -Parent $pdftohtml.FullName
-          New-Item -ItemType Directory -Force -Path bundle/bin | Out-Null
-          Copy-Item -Path (Join-Path $popBin '*') -Destination bundle/bin -Recurse -Force
+          echo "popbin=$popBin" >> $env:GITHUB_OUTPUT
 
-      - name: Create launcher
+      - name: Build executable (GUI by default, embed Poppler)
         shell: pwsh
         run: |
-          @"
-          @echo off
-          setlocal
-          set PATH=%~dp0bin;%PATH%
-          "%~dp0ExtractPDF.exe" %*
-          endlocal
-          "@ | Out-File -FilePath bundle\run.cmd -Encoding ascii -Force
-
-      - name: Assemble bundle
-        shell: pwsh
-        run: |
-          Copy-Item -Path dist\ExtractPDF.exe -Destination bundle\ -Force
+          $popBin = "${{ steps.poppler.outputs.popbin }}"
+          if (-not (Test-Path $popBin)) { throw "Poppler bin not found: $popBin" }
+          pyinstaller main.py --name ExtractPDF --onefile --noconsole --noconfirm --clean --add-binary "$popBin\*;bin"
 
       - name: Package artifact
         shell: pwsh
@@ -75,7 +96,7 @@ jobs:
           $version = "${{ github.ref_name }}"
           if ($version.StartsWith("v")) { $version = $version.Substring(1) }
           $zipName = "ExtractPDF-${version}-${{ matrix.arch }}.zip"
-          Compress-Archive -Path "bundle/*" -DestinationPath $zipName -Force
+          Compress-Archive -Path "dist/ExtractPDF.exe" -DestinationPath $zipName -Force
           echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
         id: package
 

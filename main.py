@@ -1,5 +1,6 @@
 ﻿#!/usr/bin/env python3
 import argparse
+import os
 import re
 import sys
 import threading
@@ -43,6 +44,24 @@ def have(cmd: str) -> bool:
     Works cross-platform (e.g. finds `pdftohtml.exe` on Windows).
     """
     return shutil.which(cmd) is not None
+
+
+def _inject_embedded_bin_into_path() -> None:
+    """When running as a PyInstaller onefile, prepend the bundled `bin` to PATH.
+
+    This allows embedded Poppler executables (pdftohtml/pdftoppm) to be found
+    without requiring external installation.
+    """
+    try:
+        base = getattr(sys, "_MEIPASS", None)
+        if not base:
+            return
+        bin_dir = Path(base) / "bin"
+        if bin_dir.exists():
+            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        # Non-fatal; simply skip PATH injection
+        pass
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -906,6 +925,9 @@ def run_gui() -> None:
 
 
 def main() -> None:
+    # Ensure embedded tools are discoverable if running from a onefile bundle
+    _inject_embedded_bin_into_path()
+
     parser = argparse.ArgumentParser(
         description="Batch extract figure images from PDFs using PyMuPDF and name them by their Figure titles.",
     )
